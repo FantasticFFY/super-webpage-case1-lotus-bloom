@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Lotus in Motion — A Botanical Study</title>
+<script>document.documentElement.classList.add("js");</script>
+<style>
+/* ============================================================
+   LOTUS IN MOTION · V5
+   真·逐瓣绽放：51 片花瓣按 3D 方位角排布 → 正交投影到屏幕
+   每帧由 JS 计算 倾角 → 投影方向/长度/宽度，严格左右镜像对称
+   纯矢量 · 单文件 · 无外部依赖 · 无网络请求
+   ============================================================ */
+:root{
+  --ink:#1A1A1A; --near-black:#111111; --muted:#6B6B6B; --faint:rgba(17,17,17,.15);
+  --margin:48px; --track:.18em;
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue",
+          "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", Arial, sans-serif;
+  --serif:"Songti SC","SimSun","Source Han Serif SC","Noto Serif CJK SC",serif;
+  --ease-spring:cubic-bezier(.16,1,.3,1);
+}
+*{ margin:0; padding:0; box-sizing:border-box; }
+html,body{ height:100%; }
+body{
+  background:#FBF9F5; color:var(--ink); font-family:var(--sans);
+  -webkit-font-smoothing:antialiased; text-rendering:geometricPrecision;
+  display:flex; flex-direction:column; padding:var(--margin); overflow:hidden;
+  transition:background-color 1.6s ease-in-out;
+  -webkit-tap-highlight-color:transparent;
+}
+body.s1{ background:#FBF9F5; }
+body.s2{ background:#FAF8F5; }
+body.s3{ background:#F8F7F6; }
+body.s4{ background:#F2F5F9; }
+.cn{ font-family:var(--serif); font-weight:500; }
+
+/* 首屏入场 */
+html.js.boot #lotus, html.js.boot header, html.js.boot footer,
+html.js.boot .cap-left, html.js.boot .cap-right{ opacity:0; }
+header{ transition:opacity .9s ease-out; }
+footer{ transition:opacity .9s ease-out .2s; }
+.cap-left{ transition:opacity .9s ease-out .26s; }
+
+#glow{
+  position:fixed; inset:0; z-index:2; pointer-events:none; opacity:0;
+  background:radial-gradient(circle at 50% 46%, rgba(255,255,255,1) 0%, rgba(255,255,255,.45) 38%, rgba(255,255,255,0) 68%);
+}
+.frame{ position:relative; z-index:3; display:flex; flex-direction:column; height:100%; }
+
+/* ---------- 顶部 ---------- */
+header{
+  display:grid; grid-template-columns:1fr auto 1fr; align-items:baseline;
+  font-size:10px; letter-spacing:var(--track); text-transform:uppercase; color:var(--ink);
+}
+header .l{ text-align:left; } header .r{ text-align:right; }
+header .m{ text-align:center; font-size:11px; letter-spacing:.3em; margin-right:-.3em; }
+header > *{ opacity:.78; }
+
+/* ---------- 舞台 ---------- */
+main{ position:relative; flex:1; min-height:0; }
+.stage{ position:absolute; inset:0; display:grid; place-items:center; pointer-events:none; }
+.drift{ will-change:transform; }
+.stage svg{
+  width:min(50vw, 640px); height:auto; max-height:66vh; display:block;
+  pointer-events:auto; overflow:visible;
+  transition:filter .55s ease, opacity 1s ease-out .1s;
+}
+.stage svg.lit{ filter:drop-shadow(0 0 14px rgba(255,255,255,.9)); }
+
+/* 月色层：交叉淡化（逐层错峰由 JS 写 transition-delay） */
+.moonlayer{ opacity:0; transition:opacity 1.3s ease-in-out; }
+body.s4 .moonlayer{ opacity:1; }
+.daylayer{ transition:opacity 1.3s ease-in-out; }
+body.s4 .daylayer{ opacity:0; }
+
+/* ---------- 左 ---------- */
+.cap-left{ position:absolute; left:0; top:50%; transform:translateY(-50%); width:min(30vw,400px); z-index:5; }
+.tag-row{
+  display:flex; align-items:center; gap:12px; font-size:9px; letter-spacing:var(--track);
+  text-transform:uppercase; color:var(--ink); opacity:.78; margin-bottom:34px;
+}
+.tag-row::before{ content:""; width:24px; height:1px; background:var(--ink); opacity:.6; flex:none; }
+#tagWord{ transition:opacity .2s ease; }
+h1{ font-size:clamp(40px,4.8vw,72px); font-weight:400; line-height:1.02; letter-spacing:-.02em; color:var(--near-black); }
+h1 .line{ display:block; }
+h1.out .line{ animation:lineOut 220ms cubic-bezier(.4,0,1,1) forwards; }
+h1.in  .line{ animation:lineIn 620ms var(--ease-spring) both; }
+@keyframes lineOut{ to{ transform:translateY(-12px); opacity:0; } }
+@keyframes lineIn{
+  from{ clip-path:inset(100% 0 0 0); transform:translateY(10px); opacity:.2; }
+  to  { clip-path:inset(0 0 0 0);    transform:translateY(0);    opacity:1; }
+}
+/* 数字滚动槽：cur 占位（撑开宽度），next 绝对定位滚入 */
+.num{ position:relative; display:inline-block; overflow:hidden; height:1.2em; line-height:1.2em; vertical-align:bottom; }
+.num span{ display:inline-block; white-space:nowrap; transition:transform .4s var(--ease-spring), opacity .4s ease; }
+.num .next{ position:absolute; left:0; top:0; transform:translateY(100%); opacity:0; }
+
+/* ---------- 右 ---------- */
+.cap-right{
+  position:absolute; right:0; top:50%; transform:translateY(-50%);
+  display:flex; flex-direction:column; align-items:flex-start;
+  width:min(20vw,260px); z-index:5; transition:opacity .9s ease-out .3s;
+}
+.cap-right .inner{ transition:opacity .35s ease; }
+.cap-right.fading .inner{ opacity:0; }
+.idx-row{
+  display:flex; align-items:center; gap:10px; font-size:10px; letter-spacing:var(--track);
+  text-transform:uppercase; color:var(--ink); opacity:.6; margin-bottom:28px;
+}
+.idx-row .dash{ display:block; width:44px; height:1px; background:var(--ink); opacity:.55; margin-left:6px; }
+.note-title{ font-size:10px; font-weight:600; letter-spacing:.14em; text-transform:uppercase; color:var(--near-black); margin-bottom:14px; }
+.note-body{ font-size:clamp(12px,1vw,14px); line-height:1.65; color:var(--muted); max-width:24ch; }
+
+/* ---------- 底部 ---------- */
+footer{
+  display:grid; grid-template-columns:1fr auto 1fr; align-items:end;
+  font-size:9px; letter-spacing:var(--track); text-transform:uppercase; color:var(--ink);
+}
+.credits{ display:flex; gap:56px; }
+.credits .col{ display:flex; flex-direction:column; gap:5px; }
+.credits .lab{ opacity:.4; font-size:8.5px; }
+.credits .val{ opacity:.85; font-size:10px; }
+.credits a{ color:inherit; text-decoration:none; }
+.copyright{ text-align:right; font-size:8.5px; letter-spacing:.16em; opacity:.6; }
+.stages{ width:160px; display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; }
+.stages i{ display:block; height:2px; width:8px; background:var(--faint); transition:width .6s var(--ease-spring), background-color .6s ease; }
+.stages i.on{ width:28px; background:var(--near-black); }
+.stages i:not(.on):hover{ background:rgba(17,17,17,.35); }
+
+/* ---------- 光标 ---------- */
+#dot{
+  position:fixed; left:0; top:0; z-index:9; pointer-events:none;
+  width:12px; height:12px; margin:-6px 0 0 -6px; border-radius:50%;
+  border:1px solid rgba(26,26,26,.55); opacity:0;
+  transition:width .3s ease, height .3s ease, margin .3s ease, background-color .3s ease, opacity .3s ease;
+}
+#dot.big{ width:22px; height:22px; margin:-11px 0 0 -11px; background:rgba(26,26,26,.06); }
+@media (pointer:fine){ body, .stage svg, .stages i{ cursor:none; } }
+
+@media (max-width:900px){
+  body{ padding:28px 22px 24px; overflow:auto; }
+  main{ display:flex; flex-direction:column; justify-content:flex-end; }
+  .stage{ inset:0 0 34% 0; }
+  .stage svg{ width:min(92vw,460px); max-height:none; }
+  .cap-left{ position:static; transform:none; width:100%; }
+  h1{ font-size:clamp(34px,10vw,56px); }
+  .tag-row{ margin-bottom:20px; }
+  .cap-right{ position:static; transform:none; width:100%; margin-top:22px; }
+  .idx-row{ margin-bottom:14px; }
+  footer{ grid-template-columns:1fr auto; row-gap:14px; font-size:8px; }
+  .credits{ gap:26px; } .stages{ width:120px; } .copyright{ display:none; }
+}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{ animation-duration:.3s !important; transition-duration:.3s !important; transition-delay:0ms !important; }
+}
+</style>
+</head>
+<body class="s1">
+  <div id="glow"></div>
+  <div class="frame">
+    <header>
+      <div class="l">Lotus in Motion</div>
+      <div class="m cn">〔 出水为荷 〕</div>
+      <div class="r">A Botanical Study</div>
+    </header>
+
+    <main>
+      <div class="stage">
+        <div class="drift" id="drift">
+          <svg id="lotus" viewBox="150 300 700 500" aria-label="A lotus flower that opens petal by petal">
+            <defs>
+              <!-- 日色：基部象牙白 → 中段粉白 → 瓣尖荷粉（外层更浓，内层更淡） -->
+              <linearGradient id="pd0" x1=".5" y1="1" x2=".5" y2="0">
+                <stop offset="0" stop-color="#FFF8EF"/><stop offset=".34" stop-color="#FBE9E6"/>
+                <stop offset=".74" stop-color="#F1BCC8"/><stop offset="1" stop-color="#E08FA6"/>
+              </linearGradient>
+              <linearGradient id="pd1" x1=".5" y1="1" x2=".5" y2="0">
+                <stop offset="0" stop-color="#FFF9F2"/><stop offset=".38" stop-color="#FBEBE8"/>
+                <stop offset=".78" stop-color="#F3C4CF"/><stop offset="1" stop-color="#E69DB1"/>
+              </linearGradient>
+              <linearGradient id="pd2" x1=".5" y1="1" x2=".5" y2="0">
+                <stop offset="0" stop-color="#FFFAF5"/><stop offset=".42" stop-color="#FCEEEB"/>
+                <stop offset=".82" stop-color="#F5CDD6"/><stop offset="1" stop-color="#EBAABC"/>
+              </linearGradient>
+              <linearGradient id="pd3" x1=".5" y1="1" x2=".5" y2="0">
+                <stop offset="0" stop-color="#FFFBF7"/><stop offset=".48" stop-color="#FDF1EE"/>
+                <stop offset=".88" stop-color="#F7D5DC"/><stop offset="1" stop-color="#EFB7C6"/>
+              </linearGradient>
+              <linearGradient id="pd4" x1=".5" y1="1" x2=".5" y2="0">
+                <stop offset="0" stop-color="#FFFCF9"/><stop offset=".55" stop-color="#FEF4F2"/>
+                <stop offset="1" stop-color="#F3C8D3"/>
+              </linearGradient>
+              <!-- 月色：月白 → 靛蓝 -->
+              <linearGradient id="pm0" x1=".5" y1="1" x2=".5" y2="0">
+                <stop offset="0" stop-color="#F5F7FC"/><stop offset=".34" stop-color="#E1E7F5"/>
+                <stop offset=".74" stop-color="#AEBCE0"/><stop offset="1" stop-color="#7F92C6"/>
+              </linearGradient>
+              <linearGradient id="pm1" x1=".5" y1="1" x2=".5" y2="0">
+                <stop offset="0" stop-color="#F7F9FD"/><stop offset=".38" stop-color="#E5EAF7"/>
+                <stop offset=".78" stop-color="#B9C6E6"/><stop offset="1" stop-color="#8C9ECD"/>
+              </linearGradient>
+              <linearGradient id="pm2" x1=".5" y1="1" x2=".5" y2="0">
+                <stop offset="0" stop-color="#F8FAFE"/><stop offset=".42" stop-color="#E9EEF9"/>
+                <stop offset=".82" stop-color="#C5D0EC"/><stop offset="1" stop-color="#9BABD5"/>
+              </linearGradient>
+              <linearGradient id="pm3" x1=".5" y1="1" x2=".5" y2="0">
+                <stop offset="0" stop-color="#FAFBFE"/><stop offset=".48" stop-color="#EDF1FA"/>
+                <stop offset=".88" stop-color="#D0D9F0"/><stop offset="1" stop-color="#ABB9DD"/>
+              </linearGradient>
+              <linearGradient id="pm4" x1=".5" y1="1" x2=".5" y2="0">
+                <stop offset="0" stop-color="#FBFCFF"/><stop offset=".55" stop-color="#F0F3FB"/>
+                <stop offset="1" stop-color="#C3CEEC"/>
+              </linearGradient>
+              <!-- 体积感：横向（瓣缘暗、中脊亮）+ 基部暖影 -->
+              <linearGradient id="shX" x1="0" y1=".5" x2="1" y2=".5">
+                <stop offset="0" stop-color="#6E4A63" stop-opacity=".20"/>
+                <stop offset=".24" stop-color="#6E4A63" stop-opacity="0"/>
+                <stop offset=".5" stop-color="#FFFFFF" stop-opacity=".22"/>
+                <stop offset=".76" stop-color="#6E4A63" stop-opacity="0"/>
+                <stop offset="1" stop-color="#6E4A63" stop-opacity=".20"/>
+              </linearGradient>
+              <linearGradient id="shY" x1=".5" y1="1" x2=".5" y2="0">
+                <stop offset="0" stop-color="#9C8A5E" stop-opacity=".22"/>
+                <stop offset=".3" stop-color="#9C8A5E" stop-opacity="0"/>
+              </linearGradient>
+              <!-- 莲蓬 / 花蕊 -->
+              <radialGradient id="podTopD" cx=".45" cy=".4" r=".7">
+                <stop offset="0" stop-color="#F1EDAE"/><stop offset=".6" stop-color="#D3D886"/><stop offset="1" stop-color="#A9BA62"/>
+              </radialGradient>
+              <linearGradient id="podSideD" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0" stop-color="#8FA458"/><stop offset=".45" stop-color="#C3CF7E"/><stop offset="1" stop-color="#879C52"/>
+              </linearGradient>
+              <radialGradient id="podTopM" cx=".45" cy=".4" r=".7">
+                <stop offset="0" stop-color="#E6ECF8"/><stop offset=".6" stop-color="#B9C6E4"/><stop offset="1" stop-color="#8D9CC6"/>
+              </radialGradient>
+              <linearGradient id="podSideM" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0" stop-color="#7F8FBA"/><stop offset=".45" stop-color="#B4C1E0"/><stop offset="1" stop-color="#7887B3"/>
+              </linearGradient>
+              <linearGradient id="stemD" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#A9BB82"/><stop offset=".55" stop-color="#BFCB9C" stop-opacity=".7"/><stop offset="1" stop-color="#D8E0C0" stop-opacity="0"/>
+              </linearGradient>
+              <linearGradient id="stemM" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#97A6C8"/><stop offset=".55" stop-color="#B3BFDA" stop-opacity=".7"/><stop offset="1" stop-color="#D4DCEE" stop-opacity="0"/>
+              </linearGradient>
+              <radialGradient id="groundG" cx=".5" cy=".5" r=".5">
+                <stop offset="0" stop-color="#A88E92" stop-opacity=".16"/><stop offset="1" stop-color="#A88E92" stop-opacity="0"/>
+              </radialGradient>
+            </defs>
+            <g id="zoom">
+              <ellipse id="ground" cx="500" cy="640" rx="230" ry="26" fill="url(#groundG)" opacity="0"/>
+              <g id="stem"></g>
+              <g id="petals"></g>
+            </g>
+          </svg>
+        </div>
+      </div>
+
+      <div class="cap-left">
+        <div class="tag-row">
+          <span id="tagWord">Potential</span><span>/</span>
+          <span class="num" id="numA"><span class="cur">01</span></span>
+        </div>
+        <h1 id="title"><span class="line">Before</span><span class="line">the bloom.</span></h1>
+      </div>
+
+      <aside class="cap-right" id="note">
+        <div class="inner">
+          <div class="idx-row">
+            <span class="num" id="numB"><span class="cur">01</span></span><span>/</span><span>04</span>
+            <span class="dash"></span>
+          </div>
+          <div class="note-title" id="noteTitle">A Quiet Beginning</div>
+          <p class="note-body" id="noteBody">A soft pink bud holds its petals close. The first movement is still to come.</p>
+        </div>
+      </aside>
+    </main>
+
+    <footer>
+      <div class="credits">
+        <span class="col"><span class="lab">Github</span><span class="val"><a href="#" onclick="return false">FFY</a></span></span>
+        <span class="col"><span class="lab">Built by</span><span class="val">小肥羊 Studio</span></span>
+      </div>
+      <div class="stages" id="stages"><i class="on"></i><i></i><i></i><i></i></div>
+      <div class="copyright">© 2026 小肥羊 · Lotus in Motion</div>
+    </footer>
+  </div>
+  <div id="dot"></div>
+
+<script>
+(function(){
+  "use strict";
+  var NS = "http://www.w3.org/2000/svg";
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var DEG = Math.PI / 180;
+
+  /* ================= 四态 ================= */
+  var STATES = [
+    { tag:"Potential", title:["Before","the bloom."],  noteTitle:"A Quiet Beginning",
+      note:"A soft pink bud holds its petals close. The first movement is still to come." },
+    { tag:"Awakening", title:["The first","opening."], noteTitle:"Outer Petals Stir",
+      note:"Only the outermost ring leans away — twelve degrees, and light slips inside." },
+    { tag:"In Bloom",  title:["In full","bloom."],     noteTitle:"Petal by Petal",
+      note:"Ring after ring turns outward, until the golden heart stands open." },
+    { tag:"Moonlit",   title:["Blue,","in full."],     noteTitle:"A Cool Echo",
+      note:"The same flower, colder and quieter, lit by another sky." }
+  ];
+  /* 每态 × 每轮 的开放度 p（0=合苞 1=盛放）；02 态仅外两轮微启 */
+  var OPEN = [
+    [0,   0,   0,   0, 0, 0, 0, 0],
+    [.20, .07, .02, 0, 0, 0, 0, 0],
+    [1,   1,   1,   1, 1, 1, 1, 1],
+    [1,   1,   1,   1, 1, 1, 1, 1]
+  ];
+  var CORE = [0, 0, 1, 1];
+  var ZOOM = [ {s:1.22, ty:26}, {s:1.17, ty:22}, {s:1, ty:-46}, {s:1, ty:-46} ];
+
+  /* ================= 几何 ================= */
+  var OX = 500, OY = 600;                 /* 花托中心（花瓣基部所在环面） */
+  var ELEV = 26 * DEG;                     /* 观察仰角：略俯视 */
+  var sinE = Math.sin(ELEV), cosE = Math.cos(ELEV);
+  var PH = 262;                            /* 花瓣长度 */
+  /* 荷花瓣：基部窄、中段最宽、瓣尖微钝的尖卵形，左右严格对称，基部在 (0,0) */
+  var PETAL_D = "M0 0 C -24 -16 -58 -74 -60 -138 C -61 -192 -34 -236 -7 -257 " +
+                "Q 0 -263 7 -257 C 34 -236 61 -192 60 -138 C 58 -74 24 -16 0 0 Z";
+  var RIDGE_D = "M0 -10 C 0 -90 0 -170 0 -230";
+  var VEINS = [];
+  for (var v = -3; v <= 3; v++){
+    if (v === 0) continue;
+    VEINS.push("M0 -8 Q " + (v * 21) + " -128 " + (v * 12) + " -238");
+  }
+
+  /* 八轮（外→内）：n 片数 · r/rb 盛放/合苞时基部环半径 · s 尺度 · tb/to 合苞/盛放倾角(°) · c 色阶 */
+  var LAYERS = [
+    { n:8, r:46, rb:25, s:1.00, tb:-8, to:96, c:0 },
+    { n:8, r:41, rb:21, s:0.95, tb:-7, to:85, c:1 },
+    { n:7, r:36, rb:17, s:0.89, tb:-6, to:75, c:1 },
+    { n:7, r:31, rb:14, s:0.82, tb:-5, to:66, c:2 },
+    { n:6, r:26, rb:11, s:0.74, tb:-4, to:58, c:2 },
+    { n:6, r:21, rb: 8, s:0.65, tb:-3, to:51, c:3 },
+    { n:5, r:16, rb: 6, s:0.56, tb:-2, to:45, c:3 },
+    { n:4, r:12, rb: 4, s:0.48, tb:-1, to:40, c:4 }
+  ];
+
+  function mk(tag, a, parent){
+    var e = document.createElementNS(NS, tag);
+    for (var k in a) e.setAttribute(k, a[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+
+  var petalsG = document.getElementById("petals");
+  var stemG = document.getElementById("stem");
+  var zoomG = document.getElementById("zoom");
+  var ground = document.getElementById("ground");
+
+  /* ---------- 花梗 ---------- */
+  var STEM_D = "M" + (OX - 6) + " " + (OY + 4) + " C " + (OX - 5.5) + " " + (OY + 70) + " " + (OX - 4) + " " + (OY + 140) +
+               " " + (OX - 3) + " " + (OY + 200) + " L " + (OX + 3) + " " + (OY + 200) + " C " + (OX + 4) + " " + (OY + 140) +
+               " " + (OX + 5.5) + " " + (OY + 70) + " " + (OX + 6) + " " + (OY + 4) + " Z";
+  mk("path", { d:STEM_D, fill:"url(#stemD)", class:"daylayer" }, stemG);
+  mk("path", { d:STEM_D, fill:"url(#stemM)", class:"moonlayer" }, stemG);
+
+  /* ---------- 花瓣 ---------- */
+  var petals = [];
+  LAYERS.forEach(function(L, li){
+    var off = (li % 2) ? 180 / L.n : 0;           /* 相邻轮错开半瓣 */
+    for (var i = 0; i < L.n; i++){
+      /* 方位角从「正对观者」(90°) 起均分 → 方位集合关于中轴严格镜像对称 */
+      var phi = (90 + off + 360 * i / L.n) * DEG;
+      var g = mk("g", {});
+      mk("path", { d:PETAL_D, fill:"url(#pd" + L.c + ")", stroke:"rgba(214,146,164,.55)",
+                   "stroke-width":".8", "vector-effect":"non-scaling-stroke", class:"daylayer" }, g);
+      var moon = mk("path", { d:PETAL_D, fill:"url(#pm" + L.c + ")", stroke:"rgba(236,243,255,.95)",
+                   "stroke-width":"1.3", "vector-effect":"non-scaling-stroke", class:"moonlayer" }, g);
+      moon.style.transitionDelay = (li * 70) + "ms";
+      mk("path", { d:PETAL_D, fill:"url(#shX)" }, g);
+      mk("path", { d:PETAL_D, fill:"url(#shY)" }, g);
+      VEINS.forEach(function(d){
+        mk("path", { d:d, fill:"none", stroke:"rgba(176,104,132,.16)", "stroke-width":".7",
+                     "vector-effect":"non-scaling-stroke", "stroke-linecap":"round" }, g);
+      });
+      mk("path", { d:RIDGE_D, fill:"none", stroke:"rgba(255,255,255,.5)", "stroke-width":"1.1",
+                   "vector-effect":"non-scaling-stroke", "stroke-linecap":"round" }, g);
+      var shade = mk("path", { d:PETAL_D, fill:"#5E4560", opacity:"0" }, g);
+      petals.push({ g:g, shade:shade, L:L, li:li, phi:phi,
+                    cf:Math.cos(phi), sf:Math.sin(phi),
+                    depth: Math.sin(phi) * (L.r + 70) - li * 0.01,
+                    a:{ from:0, to:0, start:0, cur:0 } });
+    }
+  });
+
+  /* ---------- 莲蓬 + 花蕊 ---------- */
+  function proj(X, Y, Z){ return [OX + X, OY - (Y * cosE - Z * sinE)]; }
+  function buildCore(moon){
+    var root = mk("g", { class: moon ? "moonlayer" : "daylayer" });
+    var back = mk("g", {}, root), pod = mk("g", {}, root), front = mk("g", {}, root);
+    var H = 66, R = 31, RB = 15;
+    var top = proj(0, H, 0), bot = proj(0, 4, 0);
+    var tyY = top[1], ry = R * sinE;
+    mk("path", { d:"M" + (OX - R) + " " + tyY + " C " + (OX - R) + " " + (tyY + 26) + " " + (OX - RB - 3) + " " + (bot[1] - 6) +
+                 " " + (OX - RB) + " " + bot[1] + " L " + (OX + RB) + " " + bot[1] + " C " + (OX + RB + 3) + " " + (bot[1] - 6) +
+                 " " + (OX + R) + " " + (tyY + 26) + " " + (OX + R) + " " + tyY + " Z",
+                 fill: moon ? "url(#podSideM)" : "url(#podSideD)" }, pod);
+    mk("ellipse", { cx:OX, cy:tyY, rx:R, ry:ry, fill: moon ? "url(#podTopM)" : "url(#podTopD)",
+                    stroke: moon ? "rgba(240,245,255,.8)" : "rgba(255,250,215,.7)", "stroke-width":".8" }, pod);
+    var seeds = [[0,0]];
+    for (var k = 0; k < 7; k++){ var a = k / 7 * Math.PI * 2; seeds.push([Math.cos(a) * 17, Math.sin(a) * 17]); }
+    seeds.forEach(function(s){
+      var x = OX + s[0], y = tyY + s[1] * sinE;
+      mk("ellipse", { cx:x.toFixed(1), cy:y.toFixed(1), rx:3.1, ry:(3.1 * sinE + .6).toFixed(2),
+                      fill: moon ? "rgba(70,84,128,.42)" : "rgba(112,124,52,.45)" }, pod);
+      mk("circle", { cx:(x - .8).toFixed(1), cy:(y - .5).toFixed(1), r:.8, fill:"rgba(255,255,255,.6)" }, pod);
+    });
+    /* 花蕊：48 根，3D 外倾后投影；后半在莲蓬之后、前半在莲蓬之前 */
+    var N = 48;
+    for (var j = 0; j < N; j++){
+      var psi = (90 + 360 * j / N + 3.75) * DEG;
+      var cp = Math.cos(psi), sp = Math.sin(psi);
+      var tilt = (48 + (j % 3) * 7) * DEG, len = 38 + (j % 4) * 5;
+      var b = proj(R * .82 * cp, H * .5, R * .82 * sp);
+      var m = proj((R * .82 + Math.sin(tilt) * len * .45) * cp, H * .5 + Math.cos(tilt) * len * .62, (R * .82 + Math.sin(tilt) * len * .45) * sp);
+      var e = proj((R * .82 + Math.sin(tilt) * len) * cp, H * .5 + Math.cos(tilt) * len * .9, (R * .82 + Math.sin(tilt) * len) * sp);
+      var host = sp < 0 ? back : front;
+      mk("path", { d:"M" + b[0].toFixed(1) + " " + b[1].toFixed(1) + " Q " + m[0].toFixed(1) + " " + m[1].toFixed(1) +
+                   " " + e[0].toFixed(1) + " " + e[1].toFixed(1), fill:"none",
+                   stroke: moon ? "rgba(200,212,240,.95)" : "rgba(236,200,112,.95)", "stroke-width":"1",
+                   "stroke-linecap":"round" }, host);
+      mk("ellipse", { cx:e[0].toFixed(1), cy:e[1].toFixed(1), rx:2.5, ry:1.7,
+                      fill: moon ? "#EEF2FC" : (j % 2 ? "#F2CC66" : "#E2AE45") }, host);
+    }
+    return root;
+  }
+  var coreG = mk("g", {});
+  coreG.appendChild(buildCore(false));
+  coreG.appendChild(buildCore(true));
+  var coreA = { from:0, to:0, start:0, cur:0 };
+
+  /* 深度排序：后半圈外层最先画 → 莲蓬 → 前半圈外层最后画 */
+  petals.sort(function(a, b){ return a.depth - b.depth; });
+  var coreInserted = false;
+  petals.forEach(function(P){
+    if (!coreInserted && P.depth > 0){ petalsG.appendChild(coreG); coreInserted = true; }
+    petalsG.appendChild(P.g);
+  });
+  if (!coreInserted) petalsG.appendChild(coreG);
+
+  /* ================= 投影：开放度 p → 屏幕变换 ================= */
+  function place(P, p, sway){
+    var L = P.L;
+    var T = (L.tb + (L.to - L.tb) * p + sway) * DEG;       /* 3D 外翻倾角（从竖直量起） */
+    var r = L.rb + (L.r - L.rb) * Math.max(0, Math.min(p, 1.06));
+    var cf = P.cf, sf = P.sf;
+    var bx = OX + r * cf, by = OY + r * sf * sinE;         /* 基部点投影 */
+    var dx = Math.sin(T) * cf;                             /* 花瓣方向向量投影 */
+    var du = Math.cos(T) * cosE - Math.sin(T) * sf * sinE;
+    var len = Math.sqrt(dx * dx + du * du);
+    var rot = Math.atan2(dx, du) / DEG;
+    var tx = -sf, tu = -cf * sinE;                         /* 横向切线投影 → 视宽 */
+    var perp = len > 1e-4 ? Math.abs(tx * du - tu * dx) / len : 1;
+    var wsMin = 0.56 - 0.24 * Math.min(1, Math.max(0, p));   /* 绽放后侧向近边缘的瓣收窄成薄片，避免唇形色块 */
+    var ws = (wsMin + (1 - wsMin) * perp) * (0.8 + 0.2 * Math.min(1, Math.max(0, p)));
+    var s = L.s;
+    P.g.setAttribute("transform", "translate(" + bx.toFixed(2) + " " + by.toFixed(2) + ") rotate(" + rot.toFixed(2) +
+                     ") scale(" + (ws * s).toFixed(4) + " " + (Math.max(len, .015) * s).toFixed(4) + ")");
+    P.shade.setAttribute("opacity", (0.03 + 0.16 * (1 - Math.min(len, 1))).toFixed(3));
+  }
+
+  /* 阻尼弹簧：起手快、约 4–5% 过冲、平稳回落 */
+  function spring(t){ if (t <= 0) return 0; if (t >= 1) return 1; return 1 - Math.exp(-6.2 * t) * Math.cos(6.4 * t); }
+  var DUR = reduced ? 300 : 1650, STAG = reduced ? 0 : 90;
+  var zoomA = { from:ZOOM[0], to:ZOOM[0], start:0, cur:ZOOM[0] };
+
+  function retarget(state, now, instant){
+    var curSum = 0, toSum = 0;
+    petals.forEach(function(P){ curSum += P.a.cur; toSum += OPEN[state][P.li]; });
+    var opening = toSum >= curSum;
+    petals.forEach(function(P){
+      var a = P.a; a.from = a.cur; a.to = OPEN[state][P.li];
+      a.start = now + (opening ? P.li : (7 - P.li)) * STAG;
+      if (instant){ a.cur = a.from = a.to; }
+    });
+    coreA.from = coreA.cur; coreA.to = CORE[state];
+    coreA.start = now + (opening ? 380 : 0);
+    zoomA.from = { s:zoomA.cur.s, ty:zoomA.cur.ty }; zoomA.to = ZOOM[state]; zoomA.start = now;
+    if (instant){ coreA.cur = coreA.from = coreA.to; zoomA.cur = zoomA.from = zoomA.to; }
+  }
+
+  function step(a, now, dur){
+    var k = spring((now - a.start) / dur);
+    a.cur = a.from + (a.to - a.from) * k;
+    return a.cur;
+  }
+
+  function render(now){
+    var t = now || 0;
+    petals.forEach(function(P){
+      var p = (now === undefined) ? P.a.cur : step(P.a, t, DUR);
+      /* 呼吸：同轮同相 → 依旧左右对称 */
+      var sway = reduced ? 0 : Math.sin(t * .0011 + P.li * .55) * .7 * Math.max(0, Math.min(p, 1));
+      place(P, p, sway);
+    });
+    var c = (now === undefined) ? coreA.cur : step(coreA, t, DUR * .9);
+    var cc = Math.max(0, Math.min(1, c));
+    var cs = .55 + .45 * c;
+    coreG.setAttribute("transform", "translate(" + OX + " " + (OY + (1 - cc) * 30) + ") scale(" + cs.toFixed(3) + ") translate(" + (-OX) + " " + (-OY) + ")");
+    coreG.setAttribute("opacity", cc.toFixed(3));
+    ground.setAttribute("opacity", (cc * .9).toFixed(3));
+    var z = zoomA.cur;
+    if (now !== undefined){
+      var k = spring((t - zoomA.start) / (DUR * 1.1));
+      z = { s: zoomA.from.s + (zoomA.to.s - zoomA.from.s) * k, ty: zoomA.from.ty + (zoomA.to.ty - zoomA.from.ty) * k };
+      zoomA.cur = z;
+    }
+    var br = reduced ? 1 : 1 + Math.sin(t * .00084) * .005;
+    var zs = z.s * br, ox = OX, oy = 520;
+    zoomG.setAttribute("transform", "translate(" + ox + " " + (oy + z.ty) + ") scale(" + zs.toFixed(4) + ") translate(" + (-ox) + " " + (-oy) + ")");
+  }
+
+  /* ================= 文字 / 编号 / 进度 ================= */
+  var body = document.body;
+  var titleEl = document.getElementById("title"), tagWord = document.getElementById("tagWord");
+  var numA = document.getElementById("numA"), numB = document.getElementById("numB");
+  var note = document.getElementById("note");
+  var noteTitle = document.getElementById("noteTitle"), noteBody = document.getElementById("noteBody");
+  var stageSegs = document.getElementById("stages").children;
+  var glow = document.getElementById("glow"), dot = document.getElementById("dot");
+  var drift = document.getElementById("drift");
+  var cur = 0, token = 0;
+  var qs = location.search.match(/[?&]s=([1-4])/);
+  if (qs) cur = (+qs[1]) - 1;
+
+  function pad(n){ return (n < 10 ? "0" : "") + n; }
+  function setNum(slot, text){ slot.innerHTML = '<span class="cur">' + text + '</span>'; }
+  function rollNumber(slot, text){
+    var old = slot.querySelector(".cur");
+    slot.innerHTML = ""; if (old){ old.style.cssText = ""; slot.appendChild(old); }
+    var next = document.createElement("span");
+    next.className = "next"; next.textContent = text; slot.appendChild(next);
+    void next.offsetWidth;
+    if (old){ old.style.transform = "translateY(-100%)"; old.style.opacity = "0"; }
+    next.style.transform = "translateY(0)"; next.style.opacity = "1";
+    var my = token;
+    setTimeout(function(){ if (my === token) setNum(slot, text); }, 440);
+  }
+  function renderLines(lines){
+    titleEl.innerHTML = "";
+    lines.forEach(function(t){ var s = document.createElement("span"); s.className = "line"; s.textContent = t; titleEl.appendChild(s); });
+  }
+  function swapText(i){
+    var st = STATES[i], my = ++token;
+    titleEl.classList.remove("in"); titleEl.classList.add("out");
+    note.classList.add("fading"); tagWord.style.opacity = "0";
+    rollNumber(numA, pad(i + 1)); rollNumber(numB, pad(i + 1));
+    setTimeout(function(){
+      if (my !== token) return;
+      tagWord.textContent = st.tag; tagWord.style.opacity = "";
+      renderLines(st.title);
+      titleEl.classList.remove("out"); titleEl.classList.add("in");
+      Array.prototype.forEach.call(titleEl.children, function(line, k){ line.style.animationDelay = (120 + k * 70) + "ms"; });
+      noteTitle.textContent = st.noteTitle; noteBody.textContent = st.note;
+      note.classList.remove("fading");
+    }, 230);
+  }
+  function applyChrome(i){
+    body.classList.remove("s1","s2","s3","s4"); body.classList.add("s" + (i + 1));
+    for (var k = 0; k < 4; k++) stageSegs[k].classList.toggle("on", k === i);
+  }
+  function go(i){
+    i = ((i % 4) + 4) % 4;
+    if (i === cur) return;
+    cur = i;
+    retarget(i, performance.now(), false);
+    swapText(i); applyChrome(i);
+    if (!reduced && glow.animate){
+      glow.animate([{ opacity:0 }, { opacity:.07, offset:.38 }, { opacity:0 }], { duration:1600, easing:"ease-in-out" });
+    }
+  }
+
+  /* ================= 交互 ================= */
+  document.addEventListener("pointerdown", function(e){
+    if (e.target.closest && (e.target.closest("a") || e.target.closest(".stages"))) return;
+    go(cur + 1);
+  });
+  document.addEventListener("keydown", function(e){
+    if (e.key === " " || e.key === "ArrowRight" || e.key === "Enter"){ e.preventDefault(); go(cur + 1); }
+    else if (e.key === "ArrowLeft"){ go(cur - 1); }
+    else if (/^[1-4]$/.test(e.key)){ go(+e.key - 1); }
+  });
+  Array.prototype.forEach.call(stageSegs, function(seg, idx){
+    seg.addEventListener("pointerdown", function(e){ e.stopPropagation(); go(idx); });
+  });
+
+  var tx = 0, ty = 0, cx = 0, cy = 0, mx = 0, my = 0, fine = window.matchMedia("(pointer:fine)").matches;
+  if (fine && !reduced){
+    window.addEventListener("pointermove", function(e){
+      tx = ((e.clientX / innerWidth) * 2 - 1) * 8; ty = ((e.clientY / innerHeight) * 2 - 1) * 6;
+      mx = e.clientX; my = e.clientY; dot.style.opacity = "1";
+    }, { passive:true });
+    document.addEventListener("pointerleave", function(){ dot.style.opacity = "0"; });
+  }
+  var svg = document.getElementById("lotus");
+  svg.addEventListener("pointerenter", function(){ svg.classList.add("lit"); dot.classList.add("big"); });
+  svg.addEventListener("pointerleave", function(){ svg.classList.remove("lit"); dot.classList.remove("big"); });
+
+  /* ================= 主循环 ================= */
+  function loop(now){
+    render(now);
+    if (fine && !reduced){
+      cx += (tx - cx) * .06; cy += (ty - cy) * .06;
+      drift.style.transform = "translate(" + cx.toFixed(2) + "px," + cy.toFixed(2) + "px)";
+      dot.style.transform = "translate(" + mx + "px," + my + "px)";
+    }
+    requestAnimationFrame(loop);
+  }
+
+  /* ================= 初始化 ================= */
+  document.documentElement.classList.add("boot");
+  retarget(cur, 0, true);
+  render();                                   /* 同步首帧（不依赖 rAF） */
+  applyChrome(cur);
+  if (cur !== 0){
+    var st = STATES[cur];
+    tagWord.textContent = st.tag; renderLines(st.title);
+    noteTitle.textContent = st.noteTitle; noteBody.textContent = st.note;
+    setNum(numA, pad(cur + 1)); setNum(numB, pad(cur + 1));
+  }
+  if (qs){                                    /* 截图自检模式：静态定格，不跑入场与循环 */
+    document.documentElement.classList.remove("boot");
+    document.querySelectorAll("header,footer,.cap-left,.cap-right,#lotus,.moonlayer,.daylayer").forEach(function(el){ el.style.transition = "none"; });
+    return;
+  }
+  void document.body.offsetWidth;
+  document.documentElement.classList.remove("boot");
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
