@@ -6,11 +6,11 @@
 
 ## 在线预览
 
-开启 GitHub Pages 后访问：
+```
+https://fantasticffy.github.io/super-webpage-case1-lotus-bloom/
+```
 
-```
-https://<你的用户名>.github.io/<仓库名>/
-```
+仓库地址：https://github.com/FantasticFFY/super-webpage-case1-lotus-bloom
 
 ## 本地打开
 
